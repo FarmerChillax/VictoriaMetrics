@@ -16,6 +16,8 @@ according to [these docs](https://docs.victoriametrics.com/victorialogs/quicksta
 
 ## tip
 
+* FEATURE: [web UI](https://docs.victoriametrics.com/victorialogs/querying/#web-ui): implement nanosecond precision in log sorting to accurately order entries. See [this issue](https://github.com/VictoriaMetrics/VictoriaMetrics/issues/8346).
+
 ## [v1.17.0](https://github.com/VictoriaMetrics/VictoriaMetrics/releases/tag/v1.17.0-victorialogs)
 
 Released at 2025-03-16
