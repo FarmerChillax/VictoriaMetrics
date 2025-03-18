@@ -293,6 +293,10 @@ var SkipRandSleepOnGroupStart bool
 
 // startGroupMetrics creates metrics for group and its rules, and register the set
 func (g *Group) startGroupMetrics() {
+	if g.metrics != nil {
+		// path for unit test only
+		return
+	}
 	ns := metrics.NewSet()
 	g.metrics = &groupMetrics{set: ns}
 	labels := fmt.Sprintf(`group=%q, file=%q`, g.Name, g.File)

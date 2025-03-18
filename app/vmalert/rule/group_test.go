@@ -330,6 +330,7 @@ func TestGroupStart(t *testing.T) {
 	finished := make(chan struct{})
 	fs.Add(m1)
 	fs.Add(m2)
+	g.startGroupMetrics()
 	go func() {
 		g.Start(context.Background(), func() []notifier.Notifier { return []notifier.Notifier{fn} }, nil, fs)
 		close(finished)
@@ -352,8 +353,6 @@ func TestGroupStart(t *testing.T) {
 		}
 	}
 
-	// wait the group to be started
-	time.Sleep(100 * time.Millisecond)
 	// wait for multiple evaluation iterations
 	waitForIterations(4, evalInterval)
 
