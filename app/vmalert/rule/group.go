@@ -52,7 +52,7 @@ type Group struct {
 	EvalDelay      *time.Duration
 	Limit          int
 	Concurrency    int
-	Checksum       string
+	checksum       string
 	LastEvaluation time.Time
 
 	Labels          map[string]string
@@ -68,7 +68,7 @@ type Group struct {
 	// evalCancel stores the cancel fn for interrupting
 	// rules evaluation. Used on groups update() and close().
 	evalCancel context.CancelFunc
-
+	// metrics contains metrics for group and its rules, will only be created after Group.Start().
 	metrics *groupMetrics
 	// evalAlignment will make the timestamp of group query
 	// requests be aligned with interval
@@ -82,16 +82,6 @@ type groupMetrics struct {
 	iterationDuration *metrics.Summary
 	iterationMissed   *metrics.Counter
 	iterationInterval *metrics.Gauge
-}
-
-func newGroupMetrics() *groupMetrics {
-	m := &groupMetrics{}
-	m.set = metrics.NewSet()
-	return m
-}
-
-func (m *groupMetrics) close() {
-	metrics.UnregisterSet(m.set, true)
 }
 
 // merges group rule labels into result map
@@ -120,7 +110,7 @@ func NewGroup(cfg config.Group, qb datasource.QuerierBuilder, defaultInterval ti
 		Interval:        cfg.Interval.Duration(),
 		Limit:           cfg.Limit,
 		Concurrency:     cfg.Concurrency,
-		Checksum:        cfg.Checksum,
+		checksum:        cfg.Checksum,
 		Params:          cfg.Params,
 		Headers:         make(map[string]string),
 		NotifierHeaders: make(map[string]string),
@@ -149,7 +139,6 @@ func NewGroup(cfg config.Group, qb datasource.QuerierBuilder, defaultInterval ti
 	for _, h := range cfg.NotifierHeaders {
 		g.NotifierHeaders[h.Key] = h.Value
 	}
-	g.metrics = newGroupMetrics()
 	rules := make([]Rule, len(cfg.Rules))
 	for i, r := range cfg.Rules {
 		var extraLabels map[string]string
@@ -192,6 +181,13 @@ func (g *Group) ID() uint64 {
 		hash.Write([]byte(g.EvalOffset.String()))
 	}
 	return hash.Sum64()
+}
+
+// GetCheckSum returns group checksum
+func (g *Group) GetCheckSum() string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.checksum
 }
 
 // restore restores alerts state for group rules
@@ -253,7 +249,7 @@ func (g *Group) updateWith(newGroup *Group) error {
 	}
 	// add the rest of rules from registry
 	for _, nr := range rulesRegistry {
-		nr.registerMetrics(g)
+		nr.registerMetrics(g.metrics.set)
 		newRules = append(newRules, nr)
 	}
 
@@ -263,11 +259,8 @@ func (g *Group) updateWith(newGroup *Group) error {
 	g.NotifierHeaders = newGroup.NotifierHeaders
 	g.Labels = newGroup.Labels
 	g.Limit = newGroup.Limit
-	g.Checksum = newGroup.Checksum
+	g.checksum = newGroup.checksum
 	g.Rules = newRules
-
-	// cleanup newGroup allocations
-	newGroup.metrics = nil
 	return nil
 }
 
@@ -292,13 +285,16 @@ func (g *Group) Close() {
 	g.InterruptEval()
 	<-g.finishedCh
 
-	g.metrics.close()
+	g.closeGroupMetrics()
 }
 
 // SkipRandSleepOnGroupStart will skip random sleep delay in group first evaluation
 var SkipRandSleepOnGroupStart bool
 
+// startGroupMetrics creates metrics for group and its rules, and register the set
 func (g *Group) startGroupMetrics() {
+	ns := metrics.NewSet()
+	g.metrics = &groupMetrics{set: ns}
 	labels := fmt.Sprintf(`group=%q, file=%q`, g.Name, g.File)
 	g.metrics.iterationTotal = g.metrics.set.NewCounter(fmt.Sprintf(`vmalert_iteration_total{%s}`, labels))
 	g.metrics.iterationDuration = g.metrics.set.NewSummary(fmt.Sprintf(`vmalert_iteration_duration_seconds{%s}`, labels))
@@ -307,7 +303,14 @@ func (g *Group) startGroupMetrics() {
 		i := g.Interval.Seconds()
 		return i
 	})
+	for i := range g.Rules {
+		g.Rules[i].registerMetrics(g.metrics.set)
+	}
 	metrics.RegisterSet(g.metrics.set)
+}
+
+func (g *Group) closeGroupMetrics() {
+	metrics.UnregisterSet(g.metrics.set, true)
 }
 
 // Start starts group's evaluation
