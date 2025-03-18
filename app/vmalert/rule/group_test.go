@@ -42,7 +42,7 @@ func TestUpdateWith(t *testing.T) {
 		g := &Group{
 			Name: "test",
 		}
-		g.metrics = newGroupMetrics(g)
+		g.metrics = newGroupMetrics()
 		qb := &datasource.FakeQuerier{}
 		for _, r := range currentRules {
 			r.ID = config.HashRule(r)
@@ -52,7 +52,7 @@ func TestUpdateWith(t *testing.T) {
 		ng := &Group{
 			Name: "test",
 		}
-		ng.metrics = newGroupMetrics(ng)
+		ng.metrics = newGroupMetrics()
 		for _, r := range newRules {
 			r.ID = config.HashRule(r)
 			ng.Rules = append(ng.Rules, ng.newRule(qb, r))
@@ -198,7 +198,7 @@ func TestUpdateDuringRandSleep(t *testing.T) {
 		Interval: 100 * time.Hour,
 		updateCh: make(chan *Group),
 	}
-	g.metrics = newGroupMetrics(g)
+	g.metrics = newGroupMetrics()
 	go g.Start(context.Background(), nil, nil, nil)
 
 	rule1 := AlertingRule{
@@ -213,7 +213,7 @@ func TestUpdateDuringRandSleep(t *testing.T) {
 			&rule1,
 		},
 	}
-	g1.metrics = newGroupMetrics(g1)
+	g1.metrics = newGroupMetrics()
 	g.updateCh <- g1
 	time.Sleep(10 * time.Millisecond)
 	g.mu.RLock()
@@ -237,7 +237,7 @@ func TestUpdateDuringRandSleep(t *testing.T) {
 			&rule2,
 		},
 	}
-	g2.metrics = newGroupMetrics(g2)
+	g2.metrics = newGroupMetrics()
 	g.updateCh <- g2
 	time.Sleep(10 * time.Millisecond)
 	g.mu.RLock()
@@ -353,6 +353,8 @@ func TestGroupStart(t *testing.T) {
 		}
 	}
 
+	// wait the group to be started
+	time.Sleep(100 * time.Millisecond)
 	// wait for multiple evaluation iterations
 	waitForIterations(4, evalInterval)
 

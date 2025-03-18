@@ -84,25 +84,10 @@ type groupMetrics struct {
 	iterationInterval *metrics.Gauge
 }
 
-func newGroupMetrics(g *Group) *groupMetrics {
+func newGroupMetrics() *groupMetrics {
 	m := &groupMetrics{}
 	m.set = metrics.NewSet()
-
-	labels := fmt.Sprintf(`group=%q, file=%q`, g.Name, g.File)
-	m.iterationTotal = m.set.NewCounter(fmt.Sprintf(`vmalert_iteration_total{%s}`, labels))
-	m.iterationDuration = m.set.NewSummary(fmt.Sprintf(`vmalert_iteration_duration_seconds{%s}`, labels))
-	m.iterationMissed = m.set.NewCounter(fmt.Sprintf(`vmalert_iteration_missed_total{%s}`, labels))
-	m.iterationInterval = m.set.NewGauge(fmt.Sprintf(`vmalert_iteration_interval_seconds{%s}`, labels), func() float64 {
-		g.mu.RLock()
-		i := g.Interval.Seconds()
-		g.mu.RUnlock()
-		return i
-	})
 	return m
-}
-
-func (m *groupMetrics) start() {
-	metrics.RegisterSet(m.set)
 }
 
 func (m *groupMetrics) close() {
@@ -164,7 +149,7 @@ func NewGroup(cfg config.Group, qb datasource.QuerierBuilder, defaultInterval ti
 	for _, h := range cfg.NotifierHeaders {
 		g.NotifierHeaders[h.Key] = h.Value
 	}
-	g.metrics = newGroupMetrics(g)
+	g.metrics = newGroupMetrics()
 	rules := make([]Rule, len(cfg.Rules))
 	for i, r := range cfg.Rules {
 		var extraLabels map[string]string
@@ -197,9 +182,6 @@ func (g *Group) newRule(qb datasource.QuerierBuilder, r config.Rule) Rule {
 // ID return unique group ID that consists of
 // rules file and group Name
 func (g *Group) ID() uint64 {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
 	hash := fnv.New64a()
 	hash.Write([]byte(g.File))
 	hash.Write([]byte("\xff"))
@@ -274,10 +256,7 @@ func (g *Group) updateWith(newGroup *Group) error {
 		nr.registerMetrics(g)
 		newRules = append(newRules, nr)
 	}
-	// note that g.Interval is not updated here
-	// so the value can be compared later in
-	// group.Start function
-	g.Type = newGroup.Type
+
 	g.Concurrency = newGroup.Concurrency
 	g.Params = newGroup.Params
 	g.Headers = newGroup.Headers
@@ -286,6 +265,9 @@ func (g *Group) updateWith(newGroup *Group) error {
 	g.Limit = newGroup.Limit
 	g.Checksum = newGroup.Checksum
 	g.Rules = newRules
+
+	// cleanup newGroup allocations
+	newGroup.metrics = nil
 	return nil
 }
 
@@ -316,11 +298,23 @@ func (g *Group) Close() {
 // SkipRandSleepOnGroupStart will skip random sleep delay in group first evaluation
 var SkipRandSleepOnGroupStart bool
 
+func (g *Group) startGroupMetrics() {
+	labels := fmt.Sprintf(`group=%q, file=%q`, g.Name, g.File)
+	g.metrics.iterationTotal = g.metrics.set.NewCounter(fmt.Sprintf(`vmalert_iteration_total{%s}`, labels))
+	g.metrics.iterationDuration = g.metrics.set.NewSummary(fmt.Sprintf(`vmalert_iteration_duration_seconds{%s}`, labels))
+	g.metrics.iterationMissed = g.metrics.set.NewCounter(fmt.Sprintf(`vmalert_iteration_missed_total{%s}`, labels))
+	g.metrics.iterationInterval = g.metrics.set.NewGauge(fmt.Sprintf(`vmalert_iteration_interval_seconds{%s}`, labels), func() float64 {
+		i := g.Interval.Seconds()
+		return i
+	})
+	metrics.RegisterSet(g.metrics.set)
+}
+
 // Start starts group's evaluation
 func (g *Group) Start(ctx context.Context, nts func() []notifier.Notifier, rw remotewrite.RWClient, rr datasource.QuerierBuilder) {
 	defer func() { close(g.finishedCh) }()
 
-	g.metrics.start()
+	g.startGroupMetrics()
 
 	evalTS := time.Now()
 	// sleep random duration to spread group rules evaluation
